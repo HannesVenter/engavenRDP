@@ -1,0 +1,49 @@
+{
+  "format": "engavenrdp",
+  "version": 1,
+  "name": "Sample",
+  "comment": "Example file - open it with: engavenrdp examples/sample.erdp",
+  "expanded": true,
+  "settings": {
+    "security": { "protocol": "auto", "cert": "tofu", "restricted_admin": false }
+  },
+  "profiles": [
+    { "id": "p1", "name": "Domain admin", "username": "administrator", "domain": "EXAMPLE", "password": null }
+  ],
+  "children": [
+    {
+      "type": "group", "name": "Production", "expanded": true,
+      "settings": { "logon": { "profile": "Domain admin", "username": "", "domain": "", "password": null, "prompt": false } },
+      "children": [
+        {
+          "type": "group", "name": "Web", "expanded": true,
+          "comment": "IIS front ends",
+          "children": [
+            { "type": "server", "name": "web01.example.lan", "host": "web01.example.lan" },
+            { "type": "server", "name": "web02.example.lan", "host": "web02.example.lan" },
+            { "type": "server", "name": "web03.example.lan", "host": "web03.example.lan" }
+          ]
+        },
+        {
+          "type": "group", "name": "Databases", "expanded": true,
+          "settings": { "connection": { "port": 3389, "console": true, "start_program": "", "work_dir": "",
+                                         "load_balance_info": "", "auto_reconnect": true, "timeout": 30 } },
+          "children": [
+            { "type": "server", "name": "sql01.example.lan", "host": "sql01.example.lan", "display_name": "SQL primary" },
+            { "type": "server", "name": "sql02.example.lan", "host": "sql02.example.lan", "display_name": "SQL replica" }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "group", "name": "Branch office (via gateway)", "expanded": false,
+      "settings": { "gateway": { "enabled": true, "host": "rdgw.example.com", "port": 443, "use_logon": true,
+                                 "username": "", "domain": "", "password": null, "bypass_local": true } },
+      "children": [
+        { "type": "server", "name": "branch-fs01", "host": "branch-fs01", "comment": "File server" }
+      ]
+    },
+    { "type": "smartgroup", "name": "All SQL", "match": "all",
+      "rules": [ { "field": "display_name", "op": "starts", "value": "SQL" } ] }
+  ]
+}

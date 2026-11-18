@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=engavenRDP
+GenericName=RDP Connection Manager
+Comment=Manage and connect to many Remote Desktop (RDP) servers
+Exec=engavenrdp %F
+Icon=engavenrdp
+Terminal=false
+Categories=Network;RemoteAccess;System;
+Keywords=rdp;remote;desktop;windows;freerdp;
+MimeType=application/x-engavenrdp;
+StartupWMClass=engavenrdp
