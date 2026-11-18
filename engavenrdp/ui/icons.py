@@ -169,12 +169,21 @@ def app_icon() -> QIcon:
         p = QPainter(pm)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         s = size / 64
+        # Same drawing as data/engavenrdp.svg: three stacked sessions, the front one connected.
+        bg = QColor("#0f172a")
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor("#1d4ed8"))
+        p.setBrush(bg)
         p.drawRoundedRect(QRectF(2 * s, 2 * s, 60 * s, 60 * s), 14 * s, 14 * s)
-        for i, (x, y) in enumerate(((12, 14), (34, 14), (12, 34), (34, 34))):
-            p.setBrush(QColor("#dbeafe" if i != 3 else "#4ade80"))
-            p.drawRoundedRect(QRectF(x * s, y * s, 18 * s, 14 * s), 2.5 * s, 2.5 * s)
+        p.setBrush(QColor("#334155"))
+        p.drawRoundedRect(QRectF(8 * s, 11 * s, 33 * s, 24 * s), 4 * s, 4 * s)
+        p.setPen(QPen(bg, 2.5 * s))
+        p.setBrush(QColor("#64748b"))
+        p.drawRoundedRect(QRectF(15 * s, 19 * s, 33 * s, 24 * s), 4 * s, 4 * s)
+        p.setBrush(QColor("#f1f5f9"))
+        p.drawRoundedRect(QRectF(22 * s, 27 * s, 34 * s, 26 * s), 4 * s, 4 * s)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#22c55e"))
+        p.drawEllipse(QRectF(42.5 * s, 39.5 * s, 9 * s, 9 * s))
         p.end()
         icon.addPixmap(pm)
     return icon
