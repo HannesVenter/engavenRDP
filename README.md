@@ -4,6 +4,7 @@ A tree-based, multi-session RDP connection manager for Linux, built on FreeRDP.
 Organise hundreds of Windows servers in a tree, set credentials and settings once and
 let them inherit, connect to a whole group with one click, and watch every session as a
 live thumbnail — all inside one window. Sessions are real FreeRDP sessions embedded in the app.
+Opens `.rdg` files from RDCMan.
 
 See [`SPEC.md`](SPEC.md) for the full specification this code implements.
 
@@ -31,7 +32,7 @@ See [`SPEC.md`](SPEC.md) for the full specification this code implements.
   as soon as the server is back up — handy after reboots).
 * **Smart groups**: rules on name / display name / host / comment / parent group.
 * **Bulk add** with patterns (`web[01-10]`, `{prod,stage}-db[1-5]`, `node[a-f]`, `10.0.0.[1-20]`),
-  **import from a text file**, **open Windows `.rdg` files**, **export / import groups**.
+  **import from a text file**, **open `.rdg` files from RDCMan**, **export / import groups**.
 * **Credential profiles** per file or global; passwords **encrypted at rest** with the desktop keyring
   (GNOME Keyring / KWallet via Secret Service) or a passphrase. Files that can't be decrypted on
   this machine still open — with a banner — and the encrypted values are preserved on save.
