@@ -10,6 +10,15 @@ See [`SPEC.md`](SPEC.md) for the full specification this code implements.
 
 ![Thumbnail grid](docs/thumbnails.png)
 
+## Why I built this
+
+I wanted Linux as my daily driver, but I still look after Windows machines and servers. The one
+thing holding me back was a good way to keep all those RDP sessions organised in one window.
+engavenRDP is what let me switch completely: I now work full time on Ubuntu 26.04 and still reach
+every Windows machine I need.
+
+If you are in the same position, I hope it saves you some time.
+
 ## Status and privacy
 
 * A personal project, shared as is under the MIT licence in the hope it saves someone time.
