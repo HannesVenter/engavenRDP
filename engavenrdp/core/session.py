@@ -35,6 +35,9 @@ class Session(QObject):
         self.state = State.DISCONNECTED
         self.last_error = ""
         self.auth_failed = False  # the last attempt ended because the credentials were rejected
+        self.cert_change = None   # CertChange if the last attempt failed on a changed certificate
+        self._attempt_lines: list[str] = []  # FreeRDP output of the current attempt
+        self._abort_reason = ""
         self.log_lines: list[str] = []
         self.proc: QProcess | None = None
         self.embed_window_id: int | None = None  # the host widget's X id
@@ -60,6 +63,9 @@ class Session(QObject):
         self._user_stop = False
         self.last_error = ""
         self.auth_failed = False
+        self.cert_change = None
+        self._attempt_lines = []
+        self._abort_reason = ""
         try:
             cmd = self.backend.build_command(spec)
         except CommandError as e:
@@ -126,6 +132,15 @@ class Session(QObject):
         if not self.proc:
             return
         data = bytes(self.proc.readAllStandardOutput()).decode("utf-8", "replace")
+        fresh = [line.rstrip() for line in data.splitlines() if line.strip()]
+        self._attempt_lines += fresh
+        del self._attempt_lines[: max(0, len(self._attempt_lines) - self.MAX_LOG)]
+        if fresh and not self._abort_reason and self.cert_change is None \
+                and self.backend.cert_change(fresh) is not None:
+            # The client is now asking on its terminal whether to trust the new
+            # certificate, and nobody can answer there. Give the rest of the
+            # details a moment to arrive, then stop it and ask in the UI instead.
+            QTimer.singleShot(300, self._stop_on_cert_change)
         for line in data.splitlines():
             if line.strip():
                 self._log(line.rstrip())
@@ -165,8 +180,31 @@ class Session(QObject):
             return
         self.sync_size(*want)
 
+    def _stop_on_cert_change(self) -> None:
+        if self._abort_reason or not self.proc or self.proc.state() == QProcess.ProcessState.NotRunning:
+            return
+        self.cert_change = self.backend.cert_change(self._attempt_lines)
+        if self.cert_change is not None:
+            self._abort_reason = "The server's certificate has changed"
+            self.stop()
+
+    def _accepted_cert_was_replaced(self) -> bool:
+        """After the user accepted a changed certificate: was a different one saved?"""
+        want = self.spec.trusted_cert if self.spec else None
+        if want is None or not want.new_fingerprint:
+            return False
+        saved = self.backend.stored_fingerprint(want.host, want.port)
+        return saved is not None and saved != want.new_fingerprint
+
     def _mark_connected(self) -> None:
+        if self._abort_reason:
+            return
         if self.state != State.CONNECTED:
+            if self._accepted_cert_was_replaced():
+                self._abort_reason = "The server presented yet another certificate, not the one you accepted"
+                self.backend.forget_certificate(self.spec.trusted_cert)
+                self.stop()
+                return
             self.connected_at = time.monotonic()
             self._set_state(State.CONNECTED)
 
@@ -180,7 +218,11 @@ class Session(QObject):
     def _finished(self, code: int, status: QProcess.ExitStatus) -> None:
         self._poll.stop()
         self.child_window_id = None
-        if self._user_stop or (status == QProcess.ExitStatus.NormalExit and self.backend.is_user_disconnect(code)):
+        if self._abort_reason:
+            self.last_error = self._abort_reason
+            self._log(f"— {self.last_error}")
+            self._set_state(State.ERROR)
+        elif self._user_stop or (status == QProcess.ExitStatus.NormalExit and self.backend.is_user_disconnect(code)):
             reason = "Disconnected" if self._user_stop else self.backend.exit_reason(code)
             self.last_error = ""
             self._log(f"— {reason} (exit {code})")
@@ -189,6 +231,9 @@ class Session(QObject):
             normal = status == QProcess.ExitStatus.NormalExit
             self.last_error = self.backend.exit_reason(code) if normal else "FreeRDP crashed"
             self.auth_failed = normal and self.backend.is_auth_failure(code)
+            self.cert_change = self.backend.cert_change(self._attempt_lines)
+            if self.cert_change is not None:
+                self.last_error = "The server's certificate has changed"
             self._log(f"— {self.last_error} (exit {code})")
             self._set_state(State.ERROR)
 

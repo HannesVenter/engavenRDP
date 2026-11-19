@@ -90,3 +90,81 @@ def test_custom_wrapper_command_is_not_assumed_to_be_freerdp_2(tmp_path):
     assert cmd.argv == [str(sh), "run", "some.app", "/args-from:stdin"]
     assert not any("p,w" in a for a in cmd.argv)
     assert FreeRdpBackend("/bin/true run x").major() == 3  # unknown version: keep secrets off argv
+
+
+CERT_CHANGED_OUTPUT = """\
+[10:22:24:650] [1:2] [WARN][com.freerdp.crypto] - [verify_cb]: Certificate verification failure
+!!!Certificate for 192.0.2.47:3389 (RDP-Server) has changed!!!
+
+New Certificate details:
+	Common Name: WINSRV01
+	Subject:     CN = WINSRV01
+	Issuer:      CN = WINSRV01
+	Valid from:  Nov 12 02:32:55 2026 GMT
+	Valid to:    May 14 02:32:55 2027 GMT
+	Thumbprint:  a1:a8:af:b6:bd:c4:cb:d2:d9:e0:e7:ee:f5:fc:03:0a:11:18:1f:26:2d:34:3b:42:49:50:57:5e:65:6c:73:7a
+
+Old Certificate details:
+	Subject:     CN = WINSRV01
+	Issuer:      CN = WINSRV01
+	Valid from:  Jun 14 01:53:54 2026 GMT
+	Valid to:    Dec 14 01:53:54 2026 GMT
+	Thumbprint:  3c:47:52:5d:68:73:7e:89:94:9f:aa:b5:c0:cb:d6:e1:ec:f7:02:0d:18:23:2e:39:44:4f:5a:65:70:7b:86:91
+
+The above X.509 certificate does not match the certificate used for previous connections.
+This may indicate that the certificate has been tampered with.
+Please contact the administrator of the RDP server and clarify.
+Do you trust the above certificate? (Y/T/N) [10:22:24:710] [1:2] [ERROR][com.freerdp.crypto] - [freerdp_tls_handshake]: certificate not trusted, aborting.
+Error: Could not read answer from stdin.
+""".splitlines()
+
+
+def _pem(der: bytes) -> str:
+    import base64
+    return "-----BEGIN CERTIFICATE-----\n" + base64.encodebytes(der).decode() + "-----END CERTIFICATE-----\n"
+
+
+def test_changed_certificate_is_recognised_in_freerdp_output():
+    b = make(3)
+    assert b.cert_change(["[ERROR] ERRCONNECT_CONNECT_TRANSPORT_FAILED", "— Connection failed (exit 131)"]) is None
+    c = b.cert_change(CERT_CHANGED_OUTPUT)
+    assert (c.host, c.port) == ("192.0.2.47", 3389)
+    assert c.new["Common Name"] == "WINSRV01" and c.new["Valid to"] == "May 14 02:32:55 2027 GMT"
+    assert c.new_fingerprint == "".join(f"{(i * 7 + 0xa1) % 256:02x}" for i in range(32))
+    assert c.old_fingerprint.startswith("3c4752") and len(c.old_fingerprint) == 64
+    assert c.old["Valid to"] == "Dec 14 01:53:54 2026 GMT" and "Common Name" not in c.old
+
+
+def test_forget_certificate_removes_only_that_server(tmp_path, monkeypatch):
+    import hashlib
+
+    from engavenrdp.backend.base import CertChange
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    store = tmp_path / "freerdp" / "server"
+    store.mkdir(parents=True)
+    (store / "srv.lab_3389.pem").write_text(_pem(b"old certificate"))
+    (store / "other.lab_3389.pem").write_text(_pem(b"another server"))
+    known = tmp_path / "freerdp" / "known_hosts2"
+    known.write_text("srv.lab 3389 aa:bb subj iss\nsrv.lab 3390 cc:dd subj iss\nother.lab 3389 ee:ff subj iss\n")
+    b = make(3)
+    assert b.stored_fingerprint("srv.lab", 3389) == hashlib.sha256(b"old certificate").hexdigest()
+    assert b.stored_fingerprint("nobody.lab", 3389) is None
+
+    assert b.forget_certificate(CertChange("srv.lab", 3389))
+    assert sorted(p.name for p in store.iterdir()) == ["other.lab_3389.pem"]
+    assert known.read_text() == "srv.lab 3390 cc:dd subj iss\nother.lab 3389 ee:ff subj iss\n"
+    assert not b.forget_certificate(CertChange("srv.lab", 3389))  # nothing left to forget
+
+
+def test_accepted_certificate_overrides_reject_unknown():
+    from engavenrdp.backend.base import CertChange
+
+    s = spec()
+    s.security = {**s.security, "cert": "deny"}
+    assert "/cert:deny" in make(3).build_command(s).redacted
+    s.trusted_cert = CertChange("srv.lab", 3390)
+    assert "/cert:tofu" in make(3).build_command(s).redacted
+    assert "/cert-tofu" in make(2).build_command(s).redacted
+    s.security = {**s.security, "cert": "ignore"}
+    assert "/cert:ignore" in make(3).build_command(s).redacted

@@ -1,6 +1,8 @@
 """FreeRDP (xfreerdp 2.x / xfreerdp3 3.x) backend."""
 from __future__ import annotations
 
+import base64
+import hashlib
 import os
 import re
 import shlex
@@ -8,7 +10,7 @@ import shutil
 import subprocess
 from functools import lru_cache
 
-from .base import BackendInfo, Command, CommandError, RdpBackend, SessionSpec
+from .base import BackendInfo, CertChange, Command, CommandError, RdpBackend, SessionSpec
 
 CANDIDATES = ("xfreerdp3", "xfreerdp")
 
@@ -70,6 +72,26 @@ EXIT_REASONS = {
 
 # Exit codes that mean "the user name / password was not accepted".
 AUTH_FAILURE_CODES = frozenset({132, 134, 135, 148, 149, 151})
+
+
+_CERT_CHANGED = re.compile(r"Certificate for (\S+):(\d+)\b.*has changed", re.I)
+_CERT_FIELD = re.compile(r"^\s*([A-Za-z][A-Za-z ]*?):\s+(\S.*)$")
+
+
+def _config_dir() -> str:
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "freerdp")
+
+
+def _pem_fingerprint(path: str) -> str | None:
+    """SHA-256 of the first certificate in a PEM file, as lower-case hex."""
+    try:
+        with open(path, encoding="ascii", errors="replace") as fh:
+            text = fh.read()
+        m = re.search(r"-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----", text, re.S)
+        return hashlib.sha256(base64.b64decode(m.group(1))).hexdigest() if m else None
+    except (OSError, ValueError):
+        return None
 
 
 def _gateway_part(key: str, value: str, label: str) -> str:
@@ -266,6 +288,10 @@ class FreeRdpBackend(RdpBackend):
         if s.get("protocol", "auto") != "auto":
             add(f"/sec:{s['protocol']}")
         cert = s.get("cert", "tofu")
+        if spec.trusted_cert is not None and cert == "deny":
+            # The user has just accepted this server's new certificate and the old one
+            # was forgotten; "deny" would now refuse it as unknown.
+            cert = "tofu"
         if v3:
             add(f"/cert:{cert}")
         elif cert in ("tofu", "ignore"):
@@ -301,3 +327,62 @@ class FreeRdpBackend(RdpBackend):
 
     def is_auth_failure(self, code: int) -> bool:
         return code in AUTH_FAILURE_CODES
+
+    # ---------------------------------------------------- saved certificates
+    def cert_change(self, log_lines: list[str]) -> CertChange | None:
+        change: CertChange | None = None
+        section: dict[str, str] | None = None
+        for line in log_lines:
+            m = _CERT_CHANGED.search(line)
+            if m:
+                change, section = CertChange(m.group(1), int(m.group(2))), None
+                continue
+            if change is None:
+                continue
+            low = line.strip().lower()
+            if low.startswith("new certificate details"):
+                section = change.new
+            elif low.startswith("old certificate details"):
+                section = change.old
+            elif section is not None:
+                f = _CERT_FIELD.match(line)
+                if f:
+                    section.setdefault(f.group(1).strip(), f.group(2).strip())
+                elif low:
+                    section = None  # the explanatory text after the details
+        return change
+
+    def _pem_path(self, host: str, port: int) -> str:
+        return os.path.join(_config_dir(), "server", f"{host}_{port}.pem")
+
+    def forget_certificate(self, change: CertChange) -> bool:
+        removed = False
+        # FreeRDP 3: one PEM file per server.
+        paths = [self._pem_path(change.host, change.port)]
+        server_dir = os.path.dirname(paths[0])
+        old = change.old_fingerprint
+        if old and os.path.isdir(server_dir):  # in case FreeRDP spelled the file name differently
+            paths += [os.path.join(server_dir, n) for n in sorted(os.listdir(server_dir))
+                      if n.endswith(f"_{change.port}.pem") and _pem_fingerprint(os.path.join(server_dir, n)) == old]
+        for path in dict.fromkeys(paths):
+            try:
+                os.remove(path)
+                removed = True
+            except OSError:
+                pass
+        # FreeRDP 2: one line per server, "host port fingerprint subject issuer".
+        known = os.path.join(_config_dir(), "known_hosts2")
+        try:
+            with open(known, encoding="utf-8", errors="surrogateescape") as fh:
+                lines = fh.readlines()
+            keep = [ln for ln in lines if ln.split()[:2] != [change.host, str(change.port)]]
+            if len(keep) != len(lines):
+                with open(known, "w", encoding="utf-8", errors="surrogateescape") as fh:
+                    fh.writelines(keep)
+                removed = True
+        except OSError:
+            pass
+        return removed
+
+    def stored_fingerprint(self, host: str, port: int) -> str | None:
+        return _pem_fingerprint(self._pem_path(host, port))

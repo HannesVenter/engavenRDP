@@ -283,3 +283,62 @@ def test_locked_global_profiles_are_never_rekeyed_silently(app, tmp_path, monkey
     gp.load(lambda msg: None)
     gp.discard_locked()  # the explicit "remove the unreadable passwords" path
     assert all(p.password is None for p in gp.profiles) and not gp.header
+
+
+def test_changed_certificate_can_be_trusted_from_the_session_card(win, tmp_path):
+    from engavenrdp.backend.base import BackendInfo, CertChange, Command, RdpBackend
+    from engavenrdp.core.session import State
+
+    class Stub(RdpBackend):
+        name = "stub"
+        saved = "old"
+        specs = []
+        forgotten = []
+
+        def info(self):
+            return BackendInfo("stub", True, "1", "/bin/sh")
+
+        def build_command(self, spec):
+            Stub.specs.append(spec)
+            if spec.trusted_cert is None:
+                # like FreeRDP: prints the question and then waits for an answer for ever
+                return Command(["/bin/sh", "-c", "echo CHANGED; sleep 30"], None, ["sh"])
+            return Command(["/bin/sh", "-c", "echo connected to host; sleep 30"], None, ["sh"])
+
+        def cert_change(self, lines):
+            if "CHANGED" in lines:
+                return CertChange("web0.lan", 3389, {"Thumbprint": "AA:BB", "Common Name": "<web0>"},
+                                  {"Thumbprint": "11:22"})
+            return None
+
+        def forget_certificate(self, change):
+            Stub.forgotten.append((change.host, change.port))
+            return True
+
+        def stored_fingerprint(self, host, port):
+            return Stub.saved
+
+    win.backend = win.manager.backend = Stub()
+    win.backend_info = win.backend.info()
+    s = win.files[0].find_path("Web/web0")
+    s.set_record("logon", {"username": "alice", "password": Secret(plain="pw")})  # no credential prompt
+    assert win.connect_server(s) and _wait(lambda: win.manager.state(s) == State.ERROR)
+    sess = win.manager.session(s)
+    sw = win.client.session_widget(s)
+    assert sess.cert_change.new_fingerprint == "aabb" and "certificate has changed" in sess.last_error
+    assert not sw.trust_btn.isHidden() and "AA:BB" in sw.card_msg.text() and "&lt;web0&gt;" in sw.card_msg.text()
+
+    # the server shows yet another certificate on the retry: refuse and forget it again
+    Stub.saved = "ccdd"
+    sw.trust_btn.click()
+    assert _wait(lambda: len(Stub.specs) == 2 and win.manager.state(s) == State.ERROR)
+    assert Stub.specs[1].trusted_cert is sess.spec.trusted_cert and "another certificate" in sess.last_error
+    assert Stub.forgotten == [("web0.lan", 3389)] * 2
+    assert sw.trust_btn.isHidden()  # nothing to accept: the user has to connect again and look
+
+    # normal case: the accepted certificate is the one that got saved
+    assert win.connect_server(s) and _wait(lambda: win.manager.state(s) == State.ERROR)
+    Stub.saved = "aabb"
+    sw.trust_btn.click()
+    assert _wait(lambda: win.manager.state(s) == State.CONNECTED)
+    assert sess.cert_change is None and sw.trust_btn.isHidden()

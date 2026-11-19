@@ -46,6 +46,8 @@ If you are in the same position, I hope it saves you some time.
   (GNOME Keyring / KWallet via Secret Service) or a passphrase. Files that can't be decrypted on
   this machine still open — with a banner — and the encrypted values are preserved on save.
 * Passwords reach FreeRDP via **stdin** (FreeRDP 3), never the process list.
+* **Changed server certificate** (a renewed or reinstalled server): the session shows the saved and
+  the new certificate side by side and lets you trust the new one, instead of failing silently.
 * Search, status dots, keyboard shortcuts, auto-save, light/dark theme, command line.
 
 ## Install

@@ -1,7 +1,7 @@
 """Turn a server node + resolved settings into a backend SessionSpec."""
 from __future__ import annotations
 
-from ..backend import SessionSpec
+from ..backend import CertChange, SessionSpec
 from ..model.nodes import ServerNode
 from ..model.resolve import Credentials, effective_credentials, resolve
 from ..model.settings import CredentialProfile
@@ -13,7 +13,7 @@ def credentials_for(server: ServerNode, global_profiles: list[CredentialProfile]
 
 def build_spec(server: ServerNode, creds: Credentials, global_profiles: list[CredentialProfile],
                *, parent_window: int | None, width: int, height: int,
-               fullscreen: bool = False) -> SessionSpec:
+               fullscreen: bool = False, trusted_cert: CertChange | None = None) -> SessionSpec:
     r = resolve(server)
     gw = dict(r["gateway"])
     gu = gd = ""
@@ -46,6 +46,7 @@ def build_spec(server: ServerNode, creds: Credentials, global_profiles: list[Cre
         width=width,
         height=height,
         fullscreen=fullscreen,
+        trusted_cert=trusted_cert,
     )
 
 

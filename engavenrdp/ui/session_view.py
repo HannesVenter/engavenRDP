@@ -1,6 +1,8 @@
 """Widgets that host an embedded FreeRDP session."""
 from __future__ import annotations
 
+from html import escape
+
 from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QPalette
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMenu, QPlainTextEdit, QPushButton,
@@ -102,6 +104,7 @@ class SessionWidget(QWidget):
     request_reconnect = Signal(object)
     request_fullscreen = Signal(object)
     request_properties = Signal(object)
+    request_trust_cert = Signal(object)
 
     def __init__(self, server: ServerNode, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -150,7 +153,7 @@ class SessionWidget(QWidget):
         cl = QVBoxLayout(self.card_page)
         cl.addStretch(1)
         card = QFrame(objectName="card")
-        card.setMaximumWidth(520)
+        card.setMaximumWidth(640)
         cv = QVBoxLayout(card)
         cv.setContentsMargins(28, 24, 28, 24)
         self.card_title = QLabel(objectName="title")
@@ -164,6 +167,10 @@ class SessionWidget(QWidget):
         cv.addWidget(self.card_msg)
         cv.addSpacing(8)
         cv.addWidget(self.card_btn, 0, Qt.AlignmentFlag.AlignCenter)
+        self.trust_btn = QPushButton("Trust new certificate and connect")
+        self.trust_btn.setVisible(False)
+        self.trust_btn.clicked.connect(lambda: self.request_trust_cert.emit(self.server))
+        cv.addWidget(self.trust_btn, 0, Qt.AlignmentFlag.AlignCenter)
         row = QHBoxLayout()
         row.addStretch(1)
         row.addWidget(card, 3)
@@ -271,6 +278,15 @@ class SessionWidget(QWidget):
         self.card_btn.setObjectName("" if st.active else "primary")
         self.card_btn.style().unpolish(self.card_btn)
         self.card_btn.style().polish(self.card_btn)
+        change = self.session.cert_change if self.session and st == State.ERROR else None
+        self.trust_btn.setVisible(change is not None)
+        if change is not None:
+            self.card_btn.setText("Try again")
+            self.card_btn.setObjectName("")
+            self.card_btn.style().unpolish(self.card_btn)
+            self.card_btn.style().polish(self.card_btn)
+            self.card_msg.setText(_cert_change_html(change))
+            return
         if st == State.CONNECTING:
             msg = f"Connecting to {s.host}…"
         elif st == State.CONNECTED and self.session and not self.session.embedded:
@@ -284,6 +300,33 @@ class SessionWidget(QWidget):
             msg = f"{s.host}" + (f"<br><span style='color:gray'>{s.comment}</span>" if s.comment else "")
             msg += "<br><br><span style='color:gray'>Press Enter or double-click in the tree to connect.</span>"
         self.card_msg.setText(msg)
+
+
+def _cert_change_html(change) -> str:
+    """What the user needs to decide whether a changed server certificate is expected."""
+    labels = (("Common Name", "Name"), ("Issuer", "Issuer"), ("Valid from", "Valid from"),
+              ("Valid to", "Valid to"), ("Thumbprint", "Thumbprint"))
+
+    def value(key: str, text: str) -> str:
+        parts = text.split(":")
+        if key == "Thumbprint" and len(parts) > 16:  # too long for one line of the card
+            half = len(parts) // 2
+            text = ":".join(parts[:half]) + ":\n" + ":".join(parts[half:])
+            return "<span style='font-family:monospace'>" + escape(text).replace("\n", "<br>") + "</span>"
+        return escape(text)
+
+    def table(d: dict) -> str:
+        rows = "".join(f"<tr><td style='color:gray; white-space:nowrap'>{label}&nbsp;&nbsp;&nbsp;</td>"
+                       f"<td>{value(key, d[key])}</td></tr>" for key, label in labels if d.get(key))
+        return f"<table align='center'>{rows or '<tr><td>(no details reported)</td></tr>'}</table>"
+
+    return (f"<b>The certificate of {escape(change.host)}:{change.port} has changed</b>"
+            "<p>This is normal when the server renewed its certificate or was reinstalled. It can also "
+            "mean that another machine is answering at this address.</p>"
+            f"<p><b>New certificate</b></p>{table(change.new)}"
+            f"<p><b>Saved certificate</b></p>{table(change.old)}"
+            "<p style='color:gray'>Trust it only if you expect the change. To be sure, compare the "
+            "new SHA-256 thumbprint with the certificate on the server itself.</p>")
 
 
 class FullScreenWindow(QWidget):

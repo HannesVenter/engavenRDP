@@ -34,6 +34,30 @@ class SessionSpec:
     width: int = 1280
     height: int = 800
     fullscreen: bool = False
+    # A changed certificate the user has just accepted for this connection.
+    trusted_cert: "CertChange | None" = None
+
+
+@dataclass
+class CertChange:
+    """A server presented a different certificate from the one saved earlier."""
+
+    host: str
+    port: int
+    new: dict[str, str] = field(default_factory=dict)  # e.g. "Common Name", "Valid to", "Thumbprint"
+    old: dict[str, str] = field(default_factory=dict)
+
+    @staticmethod
+    def _hex(thumbprint: str) -> str:
+        return "".join(ch for ch in thumbprint.lower() if ch in "0123456789abcdef")
+
+    @property
+    def new_fingerprint(self) -> str:
+        return self._hex(self.new.get("Thumbprint", ""))
+
+    @property
+    def old_fingerprint(self) -> str:
+        return self._hex(self.old.get("Thumbprint", ""))
 
 
 class CommandError(ValueError):
@@ -75,3 +99,16 @@ class RdpBackend(abc.ABC):
     def is_auth_failure(self, code: int) -> bool:
         """True if ``code`` means the credentials were rejected."""
         return False
+
+    # -- saved server certificates
+    def cert_change(self, log_lines: list[str]) -> CertChange | None:
+        """The changed certificate reported in the output of a failed attempt, if any."""
+        return None
+
+    def forget_certificate(self, change: CertChange) -> bool:
+        """Drop the saved certificate ``change`` replaces. True if one was removed."""
+        return False
+
+    def stored_fingerprint(self, host: str, port: int) -> str | None:
+        """SHA-256 (lower-case hex) of the certificate saved for ``host:port``, if known."""
+        return None

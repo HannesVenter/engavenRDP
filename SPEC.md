@@ -196,6 +196,12 @@ tests/        model, inheritance, patterns, storage round-trip, crypto, FreeRDP 
 * Passwords are handed to FreeRDP through **stdin** (`/args-from:stdin` on FreeRDP 3,
   `/from-stdin` on FreeRDP 2) — never on the command line where `ps` would show them.
 * Certificate default is *trust on first use*; "ignore" is available but labelled unsafe.
+* When a server presents a different certificate from the saved one, FreeRDP asks on its terminal,
+  where nobody can answer. The session recognises the question, stops FreeRDP and shows both
+  certificates. "Trust new certificate and connect" removes the saved certificate (FreeRDP 3:
+  `~/.config/freerdp/server/<host>_<port>.pem`; FreeRDP 2: the line in `known_hosts2`) and connects
+  again; if the certificate saved by that connection is not the one that was shown, the session is
+  stopped and the certificate forgotten again.
 * Decrypted secrets live only in memory.
 
 ## 11. Acceptance checklist

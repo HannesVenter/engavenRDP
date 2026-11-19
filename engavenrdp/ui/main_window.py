@@ -120,6 +120,7 @@ class MainWindow(QMainWindow):
         self.client.connect_requested.connect(lambda s: self.connect_server(s))
         self.client.disconnect_requested.connect(self.disconnect_server)
         self.client.reconnect_requested.connect(self.reconnect_server)
+        self.client.trust_cert_requested.connect(self.trust_changed_certificate)
         self.client.properties_requested.connect(lambda n: self.properties(n))
         self.client.connect_group_requested.connect(self.manager.connect_many)
         self.client.disconnect_group_requested.connect(self._disconnect_many)
@@ -617,7 +618,7 @@ class MainWindow(QMainWindow):
             else:
                 self.manager.connect_many(servers)
 
-    def connect_server(self, server: ServerNode, prompt: bool = False) -> bool:
+    def connect_server(self, server: ServerNode, prompt: bool = False, trusted_cert=None) -> bool:
         if not self.backend_info.available:
             QMessageBox.warning(self, "FreeRDP not found", self.backend_info.message)
             return False
@@ -657,11 +658,31 @@ class MainWindow(QMainWindow):
         else:
             parent_id = sw.host.x_id()
         w, h = self.client.remote_size_hint()
-        spec = build_spec(server, creds, self.gprofiles.profiles, parent_window=parent_id, width=w, height=h)
+        spec = build_spec(server, creds, self.gprofiles.profiles, parent_window=parent_id, width=w, height=h,
+                          trusted_cert=trusted_cert)
         session.start(spec)
         self.state.add_recent(server.file.path_on_disk if server.file else None, server.id)
         self._schedule_rebuild()
         return True
+
+    def trust_changed_certificate(self, server: ServerNode) -> None:
+        """Forget the saved certificate the server no longer presents, then connect again.
+
+        The connection that follows saves the certificate it is shown; the session
+        drops it again if that is not the one the user has just accepted.
+        """
+        session = self.manager.session(server)
+        change = session.cert_change if session else None
+        if change is None or session.state.active:
+            return
+        if not self.backend.forget_certificate(change):
+            QMessageBox.warning(
+                self, "Certificate",
+                f"The saved certificate for {change.host}:{change.port} could not be found or removed, "
+                "so FreeRDP will keep refusing the new one. Remove it by hand from FreeRDP's "
+                "configuration folder (usually ~/.config/freerdp).")
+            return
+        self.connect_server(server, trusted_cert=change)
 
     def _remember_credentials(self, server: ServerNode, profile: str, user: str, domain: str, pw: str) -> None:
         from ..model.resolve import find_profile
